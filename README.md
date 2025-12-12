@@ -22,7 +22,7 @@ Similarly, the training script for **Task-specific Student Model Distillation** 
    - `sh ins.sh`
    - 将 GLUE 数据放到 `datas/glue` 下（如 `datas/glue/COLA` 等），并准备好教师/学生 BERT 权重目录。
 
-2. 先微调教师模型（示例以 CoLA 为例，可直接调用 `main_glue.py`，`script/teacher/cola.sh` 也提供了默认超参的参考写法）：
+2. 先微调教师模型（示例以 CoLA 为例，可直接调用 `main_glue.py`，`script/teacher/cola.sh` 也提供了默认超参的参考写法；此阶段仅使用常规交叉熵/微调损失，不需要双曲映射或 Sinkhorn）：
    ```bash
    CUDA_VISIBLE_DEVICES=0 python3 main_glue.py \
      --do_train --do_eval --do_lower_case \
