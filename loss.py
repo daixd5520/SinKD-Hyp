@@ -117,9 +117,75 @@ class saliency_mse(nn.Module):
 
 
 class Sinkhorn(nn.Module):
-    def __init__(self, T):
+    def __init__(self, T, use_hyperbolic=True, curvature=1.0, learnable_curvature=False, min_curvature=1e-3):
         super(Sinkhorn, self).__init__()
-        self.T = 2   
+        self.T = 2
+        self.use_hyperbolic = use_hyperbolic
+        self.learnable_curvature = learnable_curvature
+        self.curvature_floor = min_curvature
+        if learnable_curvature:
+            self.curvature_param = nn.Parameter(torch.tensor(float(curvature)))
+        else:
+            self.register_buffer("curvature_param", torch.tensor(float(curvature)))
+
+    def _get_curvature(self):
+        """Return a positive curvature scalar, optionally learned."""
+        return F.softplus(self.curvature_param) + self.curvature_floor if self.learnable_curvature else self.curvature_param
+
+    def _lorentz_inner(self, x, y):
+        """Minkowski inner product with signature (-, +, +, ...)."""
+        time_prod = -(x[..., :1] * y[..., :1])
+        space_prod = torch.sum(x[..., 1:] * y[..., 1:], dim=-1, keepdim=True)
+        return time_prod + space_prod
+
+    def _lorentz_expmap0(self, x, eps=1e-5):
+        """Exponential map at the origin on the Lorentz model.
+
+        This follows the standard hyperboloid formula with base point
+        ``o = (1/sqrt(c), 0, ..., 0)`` so that the image satisfies
+        ``⟨exp_o(v), exp_o(v)⟩_L = -1/c``. Inputs are treated as spatial
+        tangent vectors (time component zero) coming from Euclidean space.
+        """
+        curvature = self._get_curvature()
+        sqrt_c = torch.sqrt(curvature)
+        norm = torch.norm(x, dim=-1, keepdim=True).clamp_min(eps)
+        scaled_norm = sqrt_c * norm
+        time = torch.cosh(scaled_norm) / sqrt_c
+        space = torch.sinh(scaled_norm) * x / (scaled_norm * sqrt_c)
+        return self._lorentz_project(torch.cat([time, space], dim=-1))
+
+    def _lorentz_project(self, x, eps=1e-5):
+        """Project a point to the hyperboloid sheet t>0 to enforce ``⟨x,x⟩_L=-1/c``.
+
+        Numerical noise in downstream operations can move points slightly off
+        the manifold; projecting avoids silently using invalid distances.
+        """
+        curvature = self._get_curvature()
+        space = x[..., 1:]
+        time = torch.sqrt((torch.sum(space * space, dim=-1, keepdim=True) + 1 / curvature).clamp_min(eps))
+        return torch.cat([time, space], dim=-1)
+
+    def _lorentz_logmap0(self, x, eps=1e-5):
+        """Logarithmic map at the origin returning the spatial tangent part."""
+        x = self._lorentz_project(x)
+        curvature = self._get_curvature()
+        sqrt_c = torch.sqrt(curvature)
+        time = x[..., :1].clamp_min(1 / sqrt_c + eps)
+        space = x[..., 1:]
+        argument = sqrt_c * time
+        d = torch.acosh(argument)
+        coef = d / (torch.sinh(d).clamp_min(eps))
+        return coef * space
+
+    def _hyperbolic_distance(self, x, y, eps=1e-5):
+        """Pairwise Lorentzian distance using the Minkowski metric."""
+        curvature = self._get_curvature()
+        x_expanded = self._lorentz_project(x).unsqueeze(1)
+        y_expanded = self._lorentz_project(y).unsqueeze(0)
+        minkowski = self._lorentz_inner(x_expanded, y_expanded)
+        argument = (-curvature * minkowski).clamp_min(1 + eps)
+        return (torch.acosh(argument) / torch.sqrt(curvature)).squeeze(-1)
+
     def sinkhorn_normalized(self,x, n_iters=10):
         for _ in range(n_iters):
             x = x / torch.sum(x, dim=1, keepdim=True)
@@ -127,7 +193,12 @@ class Sinkhorn(nn.Module):
         return x
 
     def sinkhorn_loss(self,x, y, epsilon=0.1, n_iters=20):
-        Wxy = torch.cdist(x, y, p=1)  # 计算成本矩阵
+        if self.use_hyperbolic:
+            x_lorentz = self._lorentz_expmap0(x)
+            y_lorentz = self._lorentz_expmap0(y)
+            Wxy = self._hyperbolic_distance(x_lorentz, y_lorentz)
+        else:
+            Wxy = torch.cdist(x, y, p=1)  # 计算成本矩阵
         K = torch.exp(-Wxy / epsilon)  # 计算内核矩阵
         P = self.sinkhorn_normalized(K, n_iters)  # 计算 Sinkhorn 迭代的结果
         return torch.sum(P * Wxy)  # 计算近似 EMD 损失
