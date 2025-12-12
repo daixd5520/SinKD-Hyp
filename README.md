@@ -27,7 +27,7 @@ Similarly, the training script for **Task-specific Student Model Distillation** 
    CUDA_VISIBLE_DEVICES=0 python3 main_glue.py \
      --do_train --do_eval --do_lower_case \
      --task_name cola \
-     --model_path <TEACHER_INIT_CKPT> \
+     --model_path /home/dxd/kd/SinKD-Hyp/models/experiments_distillation_teacher/exp_distill_cola \#不过这个从作者google driver里面下的应该是微调过的教师模型，不用在微调了
      --data_dir ./datas/glue \
      --per_gpu_batch_size 2 \
      --num_train_epochs 8 \
