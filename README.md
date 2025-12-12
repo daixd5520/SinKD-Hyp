@@ -17,6 +17,37 @@ The training script for **Task-specific Teacher Model Finetuning** can be found 
 
 Similarly, the training script for **Task-specific Student Model Distillation** is located in the `script/student/` directory. In this case, **$STUDENT_PATH** and **$TEACHER_PATH** represent the file paths of the student and teacher models, respectively.
 
+## 如何运行（以 GLUE 任务为例）
+1. 安装依赖并准备数据与模型：
+   - `sh ins.sh`
+   - 将 GLUE 数据放到 `datas/glue` 下（如 `datas/glue/COLA` 等），并准备好教师/学生 BERT 权重目录。
+
+2. 先微调教师模型（示例以 CoLA 为例，可直接调用 `main_glue.py`，`script/teacher/cola.sh` 也提供了默认超参的参考写法）：
+   ```bash
+   CUDA_VISIBLE_DEVICES=0 python3 main_glue.py \
+     --do_train --do_eval --do_lower_case \
+     --task_name cola \
+     --model_path <TEACHER_INIT_CKPT> \
+     --data_dir ./datas/glue \
+     --per_gpu_batch_size 2 \
+     --num_train_epochs 8 \
+     --learning_rate 2e-5
+   ```
+
+3. 使用 Sinkhorn 蒸馏学生模型（默认开启洛伦兹双曲距离，参见 `loss.py` 中 `Sinkhorn` 类）：
+   ```bash
+   CUDA_VISIBLE_DEVICES=0 python3 main_glue_distill.py \
+     --do_train --do_eval \
+     --task_name cola \
+     --teacher_path <FINETUNED_TEACHER_DIR> \
+     --student_path <STUDENT_INIT_DIR> \
+     --data_dir ./datas/glue \
+     --distill_loss kd+sinkhorn \
+     --alpha 0.9 --beta 0.8 --temperature 1.0 \
+     --per_gpu_batch_size 16 --num_train_epochs 20
+   ```
+   `--distill_loss kd+sinkhorn` 会在交叉熵与 KD 之外加入双曲 Sinkhorn 损失；如需仅使用 Sinkhorn，可改为 `--distill_loss sinkhorn`。曲率是否可学习由 `loss.py` 中 `Sinkhorn` 的构造参数控制，当前脚本默认使用固定曲率。
+
 ## Task-specific T0 Model Distillation
 To install the environment, run:
 
