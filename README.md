@@ -39,12 +39,15 @@ Similarly, the training script for **Task-specific Student Model Distillation** 
    CUDA_VISIBLE_DEVICES=0 python3 main_glue_distill.py \
      --do_train --do_eval \
      --task_name cola \
-     --teacher_path <FINETUNED_TEACHER_DIR> \
-     --student_path <STUDENT_INIT_DIR> \
+     --teacher_path models/experiments_distillation_teacher/exp_distill_cola \
+     --student_path models/bert_pt/student_bert_uncased_L-6_H-768_A-12 \
      --data_dir ./datas/glue \
      --distill_loss kd+sinkhorn \
      --alpha 0.9 --beta 0.8 --temperature 1.0 \
-     --per_gpu_batch_size 16 --num_train_epochs 20
+     --per_gpu_batch_size 4 --num_train_epochs 3
+  
+  CUDA_VISIBLE_DEVICES=0 python3 main_glue_distill.py      --do_train --do_eval      --task_name cola      --teacher_path models/experiments_distillation_teacher/exp_distill_cola/teacher      --student_path models/bert_pt/student_bert_uncased_L-6_H-768_A-12      --data_dir ./datas/glue      --distill_loss kd+sinkhorn      --alpha 0.9 --beta 0.8 --temperature 1.0      --per_gpu_batch_size 4 --num_train_epochs 3
+
    ```
    `--distill_loss kd+sinkhorn` 会在交叉熵与 KD 之外加入双曲 Sinkhorn 损失；如需仅使用 Sinkhorn，可改为 `--distill_loss sinkhorn`。曲率是否可学习由 `loss.py` 中 `Sinkhorn` 的构造参数控制，当前脚本默认使用固定曲率。
 

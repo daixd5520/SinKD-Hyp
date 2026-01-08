@@ -56,7 +56,7 @@ from transformers import (
 import os
 from transformers.file_utils import PaddingStrategy
 from promptsource.templates import DatasetTemplates
-from lossd import KL,Sinkhorn,RKL,JSKL
+from lossd import KL, Sinkhorn, RKL, JSKL, compute_hyperbolic_knn_temperature
 
 
 logger = logging.getLogger(__name__)
@@ -661,16 +661,41 @@ def main():
     result_table = []
     losskl = KL()
     lossskl = Sinkhorn()
-    maxscore=0
+    maxscore = 0
+    use_hyperbolic_temp = True  # Set to False to use fixed temperature
+
     for epoch in range(1, 11):
         model.train()
         for step, batch in enumerate(train_dataloader):
             outputs = model(**batch)
             with torch.no_grad():
                 outputt = tmodel(**batch)
-            loss1 = 0.1 * losskl(outputs.logits , outputt.logits) + 1*lossskl(outputs.logits , outputt.logits)
+
+            # Compute hyperbolic KNN-based temperature if enabled
+            if use_hyperbolic_temp:
+                try:
+                    # Detach logits for temperature computation to avoid affecting gradients
+                    temp_t, temp_s = compute_hyperbolic_knn_temperature(
+                        outputt.logits.detach(),
+                        outputs.logits.detach(),
+                        k=5,
+                        c=1.0
+                    )
+                    # Use average of teacher and student temperatures
+                    hyperbolic_temp = (temp_t + temp_s) / 2.0
+                except Exception as e:
+                    # Fallback to default temperature if hyperbolic computation fails
+                    print(f"Warning: Hyperbolic temperature computation failed: {e}. Using default temperature.")
+                    hyperbolic_temp = None
+            else:
+                hyperbolic_temp = None
+
+            # Compute distillation losses with (optional) hyperbolic temperature
+            loss_kl = losskl(outputs.logits, outputt.logits, temperature=hyperbolic_temp)
+            loss_sk = lossskl(outputs.logits, outputt.logits, temperature=hyperbolic_temp)
+            loss1 = 0.1 * loss_kl + 1.0 * loss_sk
+
             loss = loss1 + outputs.loss
-            #loss = outputs.loss
             loss = 1 * loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
